@@ -1,0 +1,1055 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<style type="text/css">
+		body { margin: 0; padding: 10px; }
+		.clearfix:after { content: "."; visibility: hidden; display: block; height: 0; clear: both; }
+		
+		#editor { float: left; width: 820px; height: 620px; border: 1px solid #000; display: none; }
+		#game { float: left; width: 620px; height: 620px; border: 1px solid #000; display: none; }
+		#left { float: left; margin: 0 50px 0 0; }
+			#menu { list-style: none; margin: 0 0 20px 0; padding: 0; }
+				#menu li { list-style: none; margin: 0; padding: 5px; width: 100px; text-align: center; font-weight: 800; }
+		#modalWrapper { position: fixed; top: 0; left: 0; width: 100%; display: none; }
+			#modal { position: relative; width: 500px; height: 200px; margin: 100px auto 0 auto; background: #999; }
+				#modal a { position: absolute; right: 5px; top: 5px; font-weight: 800; color: #000; text-decoration: none; }
+				#modal textarea { width: 450px; height: 150px; margin: 25px 0 0 25px; }
+	</style>
+</head>
+<body>
+	<div id="wrapper" class="clearfix">
+		<div id="left">
+			<ul id="menu">
+				<li><a href="#edit">Editor</a></li>
+				<li><a href="#game">Game</a></li>
+				<li id="link"><a href="#">Link</a>
+				<li id="reset"><a href="#">Reset</a></li>
+			</ul>
+			
+			<div id="instructions-game">
+				<strong>Controls:</strong><br />
+				<span>arrows to move</span><br />
+				<span>s to switch objects</span><br /><br />
+				
+				<strong>Goal:</strong><br />
+				<span>Collect all the yellow dots!</span>
+			</div>
+			
+			<div id="instructions-editor">
+				<strong>Controls:</strong><br />
+				<span>1. choose an object</span><br />
+				<span>2. left-click add to grid</span><br />
+				<span>3. right-click remove from grid</span><br /><br />
+				<strong>Cast:</strong><br />
+				<span>green - ball collector</span><br />
+				<span>orange - green's helper</span><br />
+				<span>yellow - ball to collect</span><br />
+				<span>gray - obstacle</span>
+			</div>
+		</div>
+		
+		<div id="game"></div>
+		<div id="editor"></div>
+	</div>
+	
+	<div id="modalWrapper">
+		<div id="modal">
+			<a href="#">X</a>
+			<textarea></textarea>
+		</div>
+	</div>
+	
+	<script src="https://ajax.googleapis.com/ajax/libs/jquery/1.7.1/jquery.min.js"></script>
+	<script src="base64-1.0.0.js"></script>
+	<script src="requestanimation-1.0.0.js"></script>
+	<script src="kinetic-v3.4.0.min.js"></script>
+	
+	<script>
+		var stopContextMenu = function(e) {
+			if (e.button === 2) {
+				e.stopPropagation && e.stopPropagation(); 
+				e.preventDefault && e.preventDefault(); 
+				e.cancelBubble = true; 
+				e.cancel = true; 
+				e.returnValue = false; 
+				
+				return false;
+			}
+		};
+	</script>
+	
+	<script>
+		var Pooxal = {};
+		
+		Pooxal.Ball = function(x, y) {
+			var ball = (function() {
+				return new Kinetic.Shape(function() {
+					var context = this.getContext();
+					context.beginPath();
+					context.arc(5, 5, 5, 0, 2 * Math.PI, false);
+					context.fillStyle = '#0f0';
+					context.closePath();
+					context.fill();
+					context.lineWidth = 2;
+					context.strokeStyle = '#000';
+					context.stroke();
+				});
+			})();
+			
+			ball.x = x;
+			ball.y = y;
+			ball.width = 10;
+			ball.height = 10;
+			
+			return ball;
+		};
+		
+		Pooxal.Helper = function(x, y, width, height) {
+			var helper = (function() {
+				return new Kinetic.Shape(function() {
+					var context = this.getContext();
+					context.beginPath();
+					context.rect(0, 0, 20, 20);
+					context.fillStyle = '#f90';
+					context.closePath();
+					context.fill();
+					context.lineWidth = 2;
+					context.strokeStyle = '#000';
+					context.stroke();
+				});
+			})();
+			
+			helper.x = x;
+			helper.y = y;
+			helper.width = width;
+			helper.height = height;
+			
+			return helper;
+		};
+		
+		Pooxal.Block = function(x, y, width, height, color) {
+			var block = (function(width, height, color) {
+				return new Kinetic.Shape(function() {
+					var context = this.getContext();
+					context.beginPath();
+					context.rect(0, 0, width, height);
+					context.fillStyle = color;
+					context.closePath();
+					context.fill();
+					context.lineWidth = 2;
+					context.strokeStyle = '#000';
+					context.stroke();
+				});
+			})(width, height, color);
+			
+			block.x = x;
+			block.y = y;
+			block.width = width;
+			block.height = height;
+			block.color = color;
+			
+			return block;
+		};
+		
+		Pooxal.Dot = function(x, y) {
+			var dot = (function() {
+				return new Kinetic.Shape(function() {
+					var context = this.getContext();
+					context.beginPath();
+					context.arc(5, 5, 5, 0, 2 * Math.PI, false);
+					context.fillStyle = '#ff0';
+					context.closePath();
+					context.fill();
+					context.lineWidth = 2;
+					context.strokeStyle = '#000';
+					context.stroke();
+				});
+			})();
+			
+			dot.x = x;
+			dot.y = y;
+			
+			return dot;
+		};
+		
+		Pooxal.debug = function(msg) {
+			Pooxal.inDebug && console.info(msg);
+		}
+		
+		Pooxal.inDebug = true;
+		
+		Pooxal.Game = function(id) {
+			$('#game').bind('mousedown', stopContextMenu)
+					.bind('click', stopContextMenu)
+					.bind('contextmenu', stopContextMenu);
+			
+			this.game = new Kinetic.Stage(id, 620, 620);
+			this.game.border = 20;
+			
+			this.reload();
+		};
+		
+		Pooxal.Game.prototype.clear = function() {
+			delete this.ball;
+			delete this.helper;
+			delete this.dots;
+			delete this.blocks;
+			this.game.removeAll();
+			this.game.clearAll();
+		};
+		
+		Pooxal.Game.prototype.reload = function() {
+			this.clear();
+			this.loadBackground();
+			this.loadLevel();
+			this.setupControls();
+		};
+		
+		Pooxal.Game.prototype.load = function(level) {
+			this.clear();
+			this.loadBackground();
+			this.loadLevel(level);
+			this.setupControls();
+		};
+		
+		Pooxal.Game.prototype.loadBackground = function() {
+			// draw background
+			var that = this;
+			var image = new Image();
+			
+			$(image).bind('load', function() {
+				var context = that.game.getStageLayer().getContext();
+				var pattern = context.createPattern(image, 'repeat');
+				context.beginPath();
+				context.rect(10, 10, 600, 600);
+				context.fillStyle = pattern;
+				context.closePath();
+				context.fill();
+				context.lineWidth = 2;
+				context.strokeStyle = '#000';
+				context.stroke();
+			});
+			
+			image.src = 'wood-pattern.png';
+			this.board = { x: 10, y: 10, width: 600, height: 600 };
+		};
+		
+		Pooxal.Game.prototype.loadLevel = function(level) {
+			if (level) {
+				// load up level
+				Pooxal.localSet('userLevel', level);
+			}
+			
+			// load level from local storage
+			var userLevel = Pooxal.localGet('userLevel') || {};
+			
+			// create ball
+			delete this.ball;
+			
+			if (userLevel.ball) {
+				this.ball = Pooxal.Ball(userLevel.ball.x + this.board.x, userLevel.ball.y + this.board.y);
+				this.game.add(this.ball);
+				
+				this.player = {
+					object: this.ball,
+					direction: { x: 0, y: 0 },
+					isMoving: false
+				};
+			}
+			
+			// create helper
+			delete this.helper;
+			
+			if (userLevel.helper) {
+				this.helper = Pooxal.Helper(userLevel.helper.x + this.board.x, userLevel.helper.y + this.board.y, userLevel.helper.width, userLevel.helper.height);
+				this.game.add(this.helper);
+			}
+			
+			// create dots
+			delete this.dots;
+			
+			if (userLevel.dots) {
+				this.dots = [];
+				
+				for (var i in userLevel.dots) {
+					var dot = Pooxal.Dot(this.board.x + userLevel.dots[i].x, this.board.y + userLevel.dots[i].y);
+					dot.isProp = true;
+					this.dots.push(dot);
+					this.game.add(dot);
+				}
+			}
+			
+			// create blocks
+			delete this.blocks;
+			
+			if (userLevel.blocks) {
+				this.blocks = [];
+				
+				for (var i in userLevel.blocks) {
+					var block = Pooxal.Block(this.board.x + userLevel.blocks[i].x, this.board.y + userLevel.blocks[i].y, userLevel.blocks[i].width, userLevel.blocks[i].height, userLevel.blocks[i].color);
+					block.isProp = true;
+					this.blocks.push(block);
+					this.game.add(block);
+				}
+			}
+		};
+		
+		Pooxal.Game.prototype.setupControls = function() {
+			// keyboard controls
+			var that = this;
+			
+			$(document).unbind('keydown').bind('keydown', function(e) {
+				if (!that.player.isMoving) {
+					switch (e.keyCode) {
+						case 37:	// left
+							Pooxal.debug('left pressed');
+							that.player.direction.x = -10;
+							that.player.direction.y = 0;
+							break;
+						case 38:	// up
+							Pooxal.debug('up pressed');
+							that.player.direction.x = 0;
+							that.player.direction.y = -10;
+							break;
+						case 39:	// right
+							Pooxal.debug('right pressed');
+							that.player.direction.x = 10;
+							that.player.direction.y = 0;
+							break;
+						case 40:	// down
+							Pooxal.debug('down pressed');
+							that.player.direction.x = 0;
+							that.player.direction.y = 10;
+							break;
+						case 83: // s
+							Pooxal.debug('s pressed');
+							
+							if (that.helper) {
+								that.player.object = that.player.object === that.ball ? that.helper : that.ball;
+							}
+							
+							break;
+					}
+					
+					if (that.player.direction.x !== 0 || that.player.direction.y !== 0) {
+						e.preventDefault();
+						
+						if (!that.player.isMoving) {
+							that.player.isMoving = true;
+							that.animate();
+						}
+					}
+				} else {
+					Pooxal.debug('ball already moving');
+				}
+			});
+		};
+		
+		Pooxal.Game.prototype.animate = function() {
+			var that = this;
+			this.moveBall();
+			this.game.drawActors();
+			
+			if (this.player.isMoving) {
+				requestAnimationFrame(function() {
+					that.animate();
+				});
+			}
+		};
+		
+		Pooxal.Game.prototype.moveBall = function() {
+			// check collissions
+			var newRect = {
+				left: this.player.object.x + this.player.direction.x,
+				top: this.player.object.y + this.player.direction.y,
+				right: this.player.object.x + this.player.object.width + this.player.direction.x,
+				bottom: this.player.object.y + this.player.object.height + this.player.direction.y
+			};
+			
+			if (newRect.left >= this.board.x
+					&& newRect.right <= this.board.width + this.board.x
+					&& newRect.top >= this.board.y
+					&& newRect.bottom <= this.board.height + this.board.y) {
+				// player did not hit wall, check blocks
+				for (var i in this.blocks) {
+					if (!(newRect.left >= this.blocks[i].x + this.blocks[i].width
+							|| newRect.right <= this.blocks[i].x
+							|| newRect.top >= this.blocks[i].y + this.blocks[i].height
+							|| newRect.bottom <= this.blocks[i].y)) {
+						// player hit a block
+						this.player.direction.x = 0;
+						this.player.direction.y = 0;
+						this.player.isMoving = false;
+						
+						Pooxal.debug(['hit block', this.blocks[i]]);
+						
+						break;
+					}
+				}
+				
+				// player did not hit blocks, check dots
+				if (this.player.object === this.helper) {
+					for (var i in this.dots) {
+						if (!(newRect.left >= this.dots[i].x + this.ball.width
+								|| newRect.right <= this.dots[i].x
+								|| newRect.top >= this.dots[i].y + this.ball.height
+								|| newRect.bottom <= this.dots[i].y)) {
+							// player hit a dot
+							this.player.direction.x = 0;
+							this.player.direction.y = 0;
+							this.player.isMoving = false;
+							
+							Pooxal.debug(['hit dot', this.dots[i]]);
+							
+							break;
+						}
+					}
+				}
+				
+				// player did not hit dots, check other player object
+				var otherPlayer = this.player.object === this.ball ? this.helper : this.ball;
+				
+				if (!(newRect.left >= otherPlayer.x + otherPlayer.width
+						|| newRect.right <= otherPlayer.x
+						|| newRect.top >= otherPlayer.y + otherPlayer.height
+						|| newRect.bottom <= otherPlayer.y)) {
+					// player hit a dot
+					this.player.direction.x = 0;
+					this.player.direction.y = 0;
+					this.player.isMoving = false;
+					
+					Pooxal.debug(['hit other playe object', otherPlayer]);
+				}
+			} else {
+				// ball hit wall
+				this.player.direction.x = 0;
+				this.player.direction.y = 0;
+				this.player.isMoving = false;
+				
+				Pooxal.debug(['hit wall', this.player]);
+			}
+			
+			// check win
+			if (this.dots.length === 0) {
+				this.player.direction.x = 0;
+				this.player.direction.y = 0;
+				this.player.isMoving = false;
+				this.drawText('Winner!');
+			}
+			
+			// passed all checks
+			if (this.player.isMoving) {
+				// move player
+				this.player.object.x += this.player.direction.x;
+				this.player.object.y += this.player.direction.y;
+				
+				// absorb dots
+				this.player.object === this.ball && this.absorbDots();
+			}
+		};
+		
+		Pooxal.Game.prototype.absorbDots = function() {
+			for (var i in this.dots) {
+				if (this.player.object.x === this.dots[i].x && this.player.object.y === this.dots[i].y) {
+					var absorbedDot = this.dots.splice(i, 1);
+					this.game.remove(absorbedDot[0]);
+					this.game.drawProps();
+					
+					Pooxal.debug(['dot absorbed', absorbedDot[0]]);
+					
+					break;
+				}
+			}
+		}
+		
+		Pooxal.Game.prototype.drawText = function(text) {
+			var context = this.game.getStageLayer().getContext();
+			context.font = '20px arial';
+			context.fillStyle = '#000';
+			context.fillText(text, 300, 300);
+		}
+	</script>
+	
+	<script>
+		// editor
+		Pooxal.Editor = function(id) {
+			$('#editor').bind('mousedown', stopContextMenu)
+			.bind('click', stopContextMenu)
+			.bind('contextmenu', stopContextMenu);
+			
+			var that = this;
+			
+			this.editor = new Kinetic.Stage(id, 820, 620);
+			this.editor.on('mousemove', function(e) { that.mouseMove(); });
+			this.editor.border = 20;
+			
+			this.reload();
+		};
+		
+		Pooxal.Editor.prototype.clear = function() {
+			delete this.ball;
+			delete this.helper;
+			delete this.dots;
+			delete this.blocks;
+			this.editor.removeAll();
+			this.editor.clearAll();
+		};
+		
+		Pooxal.Editor.prototype.reload = function() {
+			this.clear();
+			this.drawControls();
+			this.drawBoard();
+			this.reloadFromStorage();
+		};
+		
+		// draw controls
+		Pooxal.Editor.prototype.drawControls = function() {
+			var that = this;
+			
+			this.controls = new Kinetic.Shape(function() {
+				var context = this.getContext();
+				context.beginPath();
+				context.rect(0, 0, 170, 170);
+				context.closePath();
+				context.lineWidth = 1;
+				context.strokeStyle = '#000';
+				context.stroke();
+			});
+			
+			this.controls.x = 10;
+			this.controls.y = 10;
+			this.controls.isProp = true;
+			this.editor.add(this.controls);
+			
+			// ball control
+			this.ballControl = new Kinetic.Shape(function() {
+				var context = this.getContext();
+				context.beginPath();
+				context.arc(5, 5, 5, 0, 2 * Math.PI, false);
+				context.fillStyle = '#0f0';
+				context.closePath();
+				context.fill();
+				context.lineWidth = 2;
+				context.strokeStyle = '#000';
+				context.stroke();
+			
+				context.beginPath();
+				context.rect(0, 0, 20, 20);
+				context.closePath();
+				context.lineWidth = 2;
+				context.strokeStyle = '#000';
+				context.stroke();
+			
+			});
+			
+			this.ballControl.x = this.controls.x + 10;
+			this.ballControl.y = this.controls.y + 10;
+			this.ballControl.width = 10;
+			this.ballControl.height = 10;
+			this.ballControl.on('click', function(e) { that.ballControlClick(e); });
+			this.editor.add(this.ballControl);
+			
+			// helper control
+			this.helperControl = Pooxal.Helper(this.controls.x + 40, this.controls.y + 10, 20, 20);
+			this.helperControl.on('mousedown', function(e) { that.helperControlClick(e); });
+			this.editor.add(this.helperControl);
+			
+			// dot control
+			this.dotControl = new Kinetic.Shape(function() {
+				var context = this.getContext();
+				context.beginPath();
+				context.arc(5, 5, 5, 0, 2 * Math.PI, false);
+				context.fillStyle = '#ff0';
+				context.closePath();
+				context.fill();
+				context.lineWidth = 2;
+				context.strokeStyle = '#000';
+				context.stroke();
+			
+				context.beginPath();
+				context.rect(0, 0, 20, 20);
+				context.closePath();
+				context.lineWidth = 2;
+				context.strokeStyle = '#000';
+				context.stroke();
+			});
+			
+			this.dotControl.x = this.controls.x + 70;
+			this.dotControl.y = this.controls.y + 10;
+			this.dotControl.on('mousedown', function(e) { that.dotControlClick(e); });
+			this.editor.add(this.dotControl);
+			
+			// block control
+			this.blockControl = Pooxal.Block(this.controls.x + 100, this.controls.y + 10, 20, 20, '#aaa');
+			this.blockControl.on('mousedown', function(e) { that.blockControlClick(e); });
+			this.editor.add(this.blockControl);
+			
+			this.selectedControl = this.ballControl;
+			var level = {};
+		};
+		
+		// draw board
+		Pooxal.Editor.prototype.drawBoard = function() {
+			var that = this;
+			
+			this.board = new Kinetic.Shape(function() {
+				var context = this.getContext();
+				
+				for (var x = 0; x <= 600; x += 20) {
+					context.beginPath();
+					context.moveTo(x, 0);
+					context.lineTo(x, 600);
+					context.closePath();
+					context.lineWidth = 1;
+					context.strokeStyle = '#ccc';
+					context.stroke();
+				}
+				
+				for (var y = 0; y <= 600; y += 20) {
+					context.beginPath();
+					context.moveTo(0, y);
+					context.lineTo(600, y);
+					context.closePath();
+					context.lineWidth = 1;
+					context.strokeStyle = '#ccc';
+					context.stroke();
+				}
+			});
+			
+			this.board.x = 210;
+			this.board.y = 10;
+			this.board.width = 600;
+			this.board.height = 600;
+			this.board.isProp = true;
+			this.editor.add(this.board);
+		};
+		
+		Pooxal.Editor.prototype.resetControls = function() {
+			this.ballControl.x = this.controls.x + 10;
+			this.ballControl.y = this.controls.y + 10;
+			
+			this.helperControl.x = this.ballControl.x + 30;
+			this.helperControl.y = this.ballControl.y;
+			
+			this.dotControl.x = this.helperControl.x + 30;
+			this.dotControl.y = this.helperControl.y;
+			
+			this.blockControl.x = this.dotControl.x + 30;
+			this.blockControl.y = this.dotControl.y;
+		
+			this.editor.drawActors();
+		};
+		
+		Pooxal.Editor.prototype.mouseMove = function() {
+			var mousePos = this.editor.getMousePos();
+
+			if (mousePos.x >= this.board.x
+					&& mousePos.x <= this.board.x + this.board.width - 11
+					&& mousePos.y >= this.board.y
+					&& mousePos.y <= this.board.y + this.board.height - 11) {
+				$(this.editor.container).css('cursor', 'none');
+				this.selectedControl.x = Math.floor(mousePos.x / 10) * 10;
+				this.selectedControl.y = Math.floor(mousePos.y / 10) * 10;
+				this.editor.drawActors();
+			} else {
+				$(this.editor.container).css('cursor', 'default');
+			}
+		};
+		
+		Pooxal.Editor.prototype.ballControlClick = function(e) {
+			if (this.selectedControl === this.ballControl) {
+				this.placeBall(this.ballControl.x, this.ballControl.y);
+			} else {
+				this.resetControls();
+				this.selectedControl = this.ballControl;
+				Pooxal.debug('ball selected');
+			}
+		};
+		
+		Pooxal.Editor.prototype.helperControlClick = function(e) {
+			if (this.selectedControl === this.helperControl) {
+				if (e.button === 0) {
+					this.placeHelper(this.helperControl.x, this.helperControl.y, this.helperControl.width, this.helperControl.height);
+				} else {
+					this.removeHelper();
+				}
+			} else {
+				this.resetControls();
+				this.selectedControl = this.helperControl;
+				Pooxal.debug('helper selected');
+			}
+		};
+		
+		Pooxal.Editor.prototype.dotControlClick = function(e) {
+			if (this.selectedControl === this.dotControl) {
+				if (e.button === 0) {
+					this.addDot(this.dotControl.x, this.dotControl.y);
+				} else if (e.button === 2) {
+					this.removeDot(this.dotControl.x, this.dotControl.y);
+				}
+			} else {
+				if (e.button === 0) {
+					this.resetControls();
+					this.selectedControl = this.dotControl;
+					Pooxal.debug('dot selected');
+				}
+			}
+		};
+		
+		Pooxal.Editor.prototype.blockControlClick = function(e) {
+			if (this.selectedControl === this.blockControl) {
+				switch (e.button) {
+					case 0:
+						this.addBlock(this.blockControl.x, this.blockControl.y, this.blockControl.width, this.blockControl.height, this.blockControl.color);
+						break;
+					case 2:
+						this.removeBlock(this.blockControl.x, this.blockControl.y);
+						return false;
+						break;
+				}
+			} else {
+				this.resetControls();
+				this.selectedControl = this.blockControl;
+				Pooxal.debug('block selected');
+			}
+		};
+		
+		// add the ball to the editor
+		Pooxal.Editor.prototype.placeBall = function(x, y) {console.info(this.ball);
+			if (this.ball === undefined) {
+				this.ball = Pooxal.Ball(x, y);
+				this.ball.isProp = true;
+				this.editor.add(this.ball);
+			}
+			
+			this.ball.x = x;
+			this.ball.y = y;
+			this.editor.drawProps();
+			
+			var ball = { x: x - this.board.x, y: y - this.board.y };
+			var userLevel = Pooxal.localGet('userLevel') || {};
+			userLevel.ball = ball;
+			Pooxal.localSet('userLevel', userLevel);
+			Pooxal.debug(['ball placed', ball]);
+		};
+		
+		// add the helper to the editor
+		Pooxal.Editor.prototype.placeHelper = function(x, y, width, height) {
+			if (this.helper === undefined) {
+				this.helper = Pooxal.Helper(x, y, width, height);
+				this.helper.isProp = true;
+				this.editor.add(this.helper);
+			}
+			
+			this.helper.x = x;
+			this.helper.y = y;
+			this.editor.drawProps();
+			
+			var helper = {x: x - this.board.x, y: y - this.board.y, width: width, height: height };
+			var userLevel = Pooxal.localGet('userLevel') || {};
+			userLevel.helper = helper;
+			Pooxal.localSet('userLevel', userLevel);
+			Pooxal.debug(['helper placed', helper]);
+		};
+		
+		Pooxal.Editor.prototype.removeHelper = function() {
+			this.editor.remove(this.helper);
+			this.editor.drawProps();
+			delete this.helper;
+			
+			var userLevel = Pooxal.localGet('userLevel') || {};
+			delete userLevel.helper;
+			Pooxal.localSet('userLevel', userLevel);
+		};
+		
+		// add a dot to the editor
+		Pooxal.Editor.prototype.addDot = function(x, y) {
+			var dot = { x: x - this.board.x, y: y - this.board.y };
+			this.placeDot(x, y);
+			
+			var userLevel = Pooxal.localGet('userLevel') || {};
+			
+			if (!userLevel.dots) {
+				userLevel.dots = [];
+			}
+			
+			userLevel.dots.push(dot);
+			Pooxal.localSet('userLevel', userLevel);
+			Pooxal.debug(['new dot', dot]);
+		};
+		
+		Pooxal.Editor.prototype.placeDot = function(x, y) {
+			if (!this.dots) {
+				this.dots = [];
+			}
+			
+			var dot = Pooxal.Dot(x, y);
+			dot.isProp = true;
+			
+			this.dots.push(dot);
+			this.editor.add(dot);
+		};
+		
+		Pooxal.Editor.prototype.removeDot = function(x, y) {
+			if (this.dots) {
+				for (var i in this.dots) {
+					if (this.dots[i].x === x && this.dots[i].y === y) {
+						var removed = this.dots.splice(i, 1);
+						this.editor.remove(removed[0]);
+						this.editor.drawProps();
+						
+						break;
+					}
+				}
+				
+				var userLevel = Pooxal.localGet('userLevel') || {};
+				
+				if (userLevel.dots) {
+					for (var i in userLevel.dots) {
+						if (userLevel.dots[i].x === x - this.board.x && userLevel.dots[i].y === y - this.board.y) {
+							userLevel.dots.splice(i, 1);
+							Pooxal.localSet('userLevel', userLevel);
+							
+							break;
+						}
+					}
+				}
+			}
+		};
+		
+		// add a block to the editor
+		Pooxal.Editor.prototype.addBlock = function(x, y, width, height, color) {
+			var block = { x: x - this.board.x, y: y - this.board.y, width: width, height: height, color: color };
+			this.placeBlock(x, y, width, height, color);
+			
+			var userLevel = Pooxal.localGet('userLevel') || {};
+			
+			if (!userLevel.blocks) {
+				userLevel.blocks = [];
+			}
+			
+			userLevel.blocks.push(block);
+			Pooxal.localSet('userLevel', userLevel);
+			Pooxal.debug(['new block', block]);
+		};
+		
+		Pooxal.Editor.prototype.placeBlock = function(x, y, width, height, color) {
+			if (!this.blocks) {
+				this.blocks = [];
+			}
+			
+			var block = Pooxal.Block(x, y, width, height, color);
+			block.isProp = true;
+			
+			this.blocks.push(block);
+			this.editor.add(block);
+		};
+		
+		Pooxal.Editor.prototype.removeBlock = function(x, y) {
+			if (this.blocks) {
+				for (var i in this.blocks) {
+					if (this.blocks[i].x === x && this.blocks[i].y === y) {
+						var removed = this.blocks.splice(i, 1);
+						this.editor.remove(removed[0]);
+						this.editor.drawProps();
+						
+						break;
+					}
+				}
+				
+				var userLevel = Pooxal.localGet('userLevel') || {};
+				
+				if (userLevel.blocks) {
+					for (var i in userLevel.blocks) {
+						if (userLevel.blocks[i].x === x - this.board.x && userLevel.blocks[i].y === y - this.board.y) {
+							userLevel.blocks.splice(i, 1);
+							Pooxal.localSet('userLevel', userLevel);
+							
+							break;
+						}
+					}
+				}
+			}
+		};
+		
+		// reload locally persisted level design
+		Pooxal.Editor.prototype.reloadFromStorage = function() {
+			var userLevel = Pooxal.localGet('userLevel') || {};
+			
+			if (userLevel.ball) {
+				this.placeBall(userLevel.ball.x + this.board.x, userLevel.ball.y + this.board.y);
+			}
+			
+			if (userLevel.helper) {
+				this.placeHelper(userLevel.helper.x + this.board.x, userLevel.helper.y + this.board.y, userLevel.helper.width, userLevel.helper.height);
+			}
+			
+			if (userLevel.dots) {
+				for (var i in userLevel.dots) {
+					this.placeDot(userLevel.dots[i].x + this.board.x, userLevel.dots[i].y + this.board.y);
+				}
+			}
+			
+			if (userLevel.blocks) {
+				for (var i in userLevel.blocks) {
+					this.placeBlock(userLevel.blocks[i].x + this.board.x, userLevel.blocks[i].y + this.board.y, userLevel.blocks[i].width, userLevel.blocks[i].height, userLevel.blocks[i].color);
+				}
+			}
+		};
+	</script>
+	
+	<script>
+		// locally persist data
+		Pooxal.localSet = function(key, value) {
+			if (localStorage) {
+				try {
+					localStorage.setItem(key, JSON.stringify(value));
+				} catch (ex) {}
+			}
+		};
+		
+		// locally retrieve data
+		Pooxal.localGet = function(key) {
+			var value = null;
+			
+			if (localStorage) {
+				try {
+					value = JSON.parse(localStorage.getItem(key));
+				} catch (ex) {}
+			}
+			
+			return value;
+		};
+		
+		// locally delete data
+		Pooxal.localDelete = function(key) {
+			if (localStorage) {
+				try {
+					localStorage.removeItem(key);
+				} catch (ex) {}
+			}
+		};
+		
+		// session persist data
+		Pooxal.sessionSet = function(key, value) {
+			if (sessionStorage) {
+				try {
+					sessionStorage.setItem(key, JSON.stringify(value));
+				} catch (ex) {}
+			}
+		};
+		
+		// session retrieve data
+		Pooxal.sessionGet = function(key) {
+			var value = null;
+			
+			if (sessionStorage) {
+				try {
+					value = JSON.parse(sessionStorage.getItem(key));
+				} catch (ex) {}
+			}
+			
+			return value;
+		};
+		
+		// session delete data
+		Pooxal.sessionDelete = function(key) {
+			if (sessionStorage) {
+				try {
+					sessionStorage.removeItem(key);
+				} catch (ex) {}
+			}
+		};
+		
+		Pooxal.hashChange = function() {
+			var hash = window.location.hash;
+			var parts = hash.split('&');
+			var mode = parts[0];
+			var level = parts[1] ? JSON.parse(Base64.decode(decodeURIComponent(parts[1]))) : null;
+			
+			switch (mode) {
+				case '#edit':
+					$('#editor').show();
+					$('#reset').show();
+					$('#instructions-editor').show();
+					$('#game').hide();
+					$('#instructions-game').hide();
+					
+					if (!Pooxal.editor) {
+						Pooxal.editor = new Pooxal.Editor('editor');
+					} else {
+						Pooxal.editor.reload();
+					}
+					
+					Pooxal.debug(Pooxal.editor);
+					
+					break;
+				case '#game':
+					$('#game').show();
+					$('#instructions-game').show();
+					$('#editor').hide();
+					$('#reset').hide();
+					$('#instructions-editor').hide();
+					
+					if (!Pooxal.game) {
+						Pooxal.game = new Pooxal.Game('game');
+						level && Pooxal.game.load(level);
+					} else {
+						Pooxal.game.reload();
+						level && Pooxal.game.load(level);
+					}
+					
+					Pooxal.debug(Pooxal.game);
+					
+					break;
+			}
+		}
+		
+		$(window).bind('hashchange', Pooxal.hashChange);
+		Pooxal.hashChange();
+		
+		$('#modal > a').bind('click', function(e) {
+			e.preventDefault();
+			$('#modalWrapper').hide();
+		});
+		
+		$('#link > a').bind('click', function(e) {
+			e.preventDefault();
+			
+			if (window.location.protocol === 'file:') {
+				var domain = 'http://pooxal.certifiedsoa.com'
+			} else {
+				var domain = window.location.protocol + '//' + window.location.host;
+			}
+			
+			var url = domain + '#game&' + encodeURIComponent(Base64.encode(JSON.stringify(Pooxal.localGet('userLevel'))));
+			$('#modal > textarea').text(url);
+			Pooxal.debug(url);
+			
+			$.ajax({
+				url: 'http://api.bitly.com/v3/shorten?format=json&login=vegasje&apiKey=R_771cfe05272c5e7eb0058b1be8e4426d&longUrl=' + encodeURIComponent(url),
+				success: function(response) {
+					Pooxal.debug(response);
+					
+					if (response.data.url && response.data.url.length > 0) {
+						$('#modal > textarea').text(response.data.url);
+					}
+				},
+				complete: function() {
+					$('#modalWrapper').show();
+				}
+			});
+		});
+		
+		$('#modal > textarea').bind('click', function(e) {
+			$(this).focus().select();
+		});
+		
+		$('#reset').bind('click', function(e) {
+			e.preventDefault();
+			localStorage && localStorage.clear();
+			Pooxal.editor.reload();
+		});
+	</script>
+</body>
+</html>
